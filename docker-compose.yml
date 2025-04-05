@@ -4,7 +4,7 @@ services:
     container_name: db
     restart: always
     ports:
-      - '3306:3306'
+      - '3307:3306'
     volumes:
       - db-data:/var/lib/mysql
     environment:
@@ -16,9 +16,11 @@ services:
       retries: 30
       start_period: 30s
 
-  backend:
-    build: .
-    container_name: backend
+  bank-service:
+    build:
+      context: ./bank-service
+      dockerfile: Dockerfile
+    container_name: bank-service
     restart: always
     ports:
       - '5000:5000'
@@ -27,7 +29,67 @@ services:
       db:
         condition: service_healthy
     env_file:
-      - .env  
+      - bank-service/.dockerenv  
+
+  rabbitmq:
+    image: rabbitmq:4.1-rc-management
+    container_name: rabbitmq
+    ports:
+      - "15672:15672"
+      - "5672:5672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+
+  mongodb:
+    image: mongo:8.0-noble
+    container_name: mongodb
+    ports:
+      - '27017:27017'
+    volumes:
+      - mongodb-data:/data/db
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+
+  log-service:
+    build:
+      context: ./log-service
+      dockerfile: Dockerfile
+    container_name: log-service
+    restart: on-failure
+    ports:
+      - '8000:8000'
+    entrypoint: ['bash', entrypoint.sh]
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      bank-service:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    env_file:
+      - log-service/.dockerenv  
+      
+  email-service:
+    build:
+      context: ./email-service
+      dockerfile: Dockerfile
+    container_name: email-service
+    restart: on-failure
+    ports:
+      - '8001:8001'
+    entrypoint: ['bash', 'entrypoint.sh']
+    depends_on:
+      bank-service:
+        condition: service_started
+    env_file:
+      - email-service/.dockerenv
 
 volumes:
   db-data:
+  mongodb-data:
+  rabbitmq-data:
